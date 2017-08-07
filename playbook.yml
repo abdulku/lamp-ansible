@@ -1,0 +1,144 @@
+---
+- hosts: all
+#Jalankan perintah dengan root/sudo level
+  become: true
+  tasks:
+    - name: Download setup IUS Repository script (https://setup.ius.io)
+      get_url:
+        url: https://setup.ius.io
+        dest: /tmp/setup-ius.sh
+        mode: 700
+      register: setup_ius_repo
+
+    - name: Jalankan setup IUS repository script
+      shell: sh /tmp/setup-ius.sh
+      when: setup_ius_repo.changed
+
+    - name: Install httpd 2.4 dan PHP 7.1 versi terbaru dari IUS repository
+      yum:
+        name: "{{ item }}"
+        state: latest
+        update_cache: yes
+      with_items:
+        - httpd24u
+        - httpd24u-mod_ssl
+        - php71u
+        - php71u-common
+        - php71u-cli
+        - php71u-mbstring
+        - php71u-mysqlnd
+        - php71u-json
+        - php71u-mcrypt
+
+    - name: Tambahkan Official MariaDB Repository
+      yum_repository:
+        name: MariaDB
+        description: MariaDB 10.2 Official Repository
+        baseurl: http://yum.mariadb.org/10.2/centos7-amd64
+        gpgkey: https://yum.mariadb.org/RPM-GPG-KEY-MariaDB
+        gpgcheck: yes
+
+    - name: Install MariaDB Server 10.2 dan MySQL-python
+      yum:
+        name: "{{ item }}"
+        state: latest
+      with_items:
+        - MariaDB-server
+        - MariaDB-client
+        - MySQL-python
+
+    - name: Hidupkan Service httpd dan MariaDB Server
+      systemd:
+        name: "{{ item }}"
+        state: started
+      with_items:
+        - httpd
+        - mariadb
+
+    - name: Generate password root MariaDB
+      command: openssl rand -hex 7 creates=/root/.my.cnf
+      register: mariadb_new_root_password
+
+#Jika file .my.cnf tidak ada, jalankan perintah berikut:
+    - name: Tampilkan hasil generate password MariaDB
+      debug:
+        msg: Password baru root MariaDB adalah "{{ mariadb_new_root_password.stdout }}"
+      when: mariadb_new_root_password.changed
+
+#Jika file .my.cnf sudah ada, jalankan perintah berikut:
+    - name: Password root (.my.cnf) sudah ada!
+      debug:
+        msg: Password DB root cek di /root/.my.cnf bro!
+      when: not mariadb_new_root_password.changed
+
+    - name: Hapus User DB anonymous
+      mysql_user:
+        name: ""
+        state: absent
+      when: mariadb_new_root_password.changed
+
+    - name: Hapus test database
+      mysql_db:
+        name: test
+        state: absent
+      when: mariadb_new_root_password.changed
+
+    - name: Update MariaDB root password
+      mysql_user:
+        name: root
+        host: "{{ item }}"
+        password: "{{ mariadb_new_root_password.stdout }}"
+      with_items:
+        - 127.0.0.1
+        - "{{ ansible_fqdn }}"
+        - ::1
+        - localhost
+      when: mariadb_new_root_password.changed
+
+    - name: Pindahkan files/my.cnf ke /root/.my.cnf
+      template:
+        src: files/my.cnf
+        dest: /root/.my.cnf
+      when: mariadb_new_root_password.changed
+
+    - name: Hidupkan Service Firewalld
+      systemd:
+        name: firewalld
+        state: started
+
+    - name: Buka port http dan https
+      firewalld:
+        service: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      with_items:
+        - http
+        - https
+
+    - name: Install Unzip
+      yum:
+        name: unzip
+        state: latest
+
+    - name: Download phpmyadmin 4.7.3
+      get_url:
+        url: https://files.phpmyadmin.net/phpMyAdmin/4.7.3/phpMyAdmin-4.7.3-all-languages.zip
+        dest: /tmp/phpmyadmin.zip
+
+    - name: Unzip file phpmyadmin
+      unarchive:
+        src: /tmp/phpmyadmin.zip
+        dest: /tmp
+        copy: no
+
+    - name: Buat direktori /var/www/html/phpmyadmin
+      file:
+        dest: /var/www/html/phpmyadmin
+        state: directory
+
+    - name: Copy file phpmyadmin
+      command: cp -aZ /tmp/phpMyAdmin-4.7.3-all-languages/. /var/www/html/phpmyadmin creates=/var/www/html/phpmyadmin/index.php
+
+    - name: Buat file info.php
+      shell: echo "<?php phpinfo(); ?>" > /var/www/html/info.php creates=/var/www/html/info.php
