@@ -5,7 +5,7 @@ My First ansible from scratch
 
 # Prerequisite
 - Virtualbox 5.1
-- Vagrant > 1.9.7
+- Vagrant => 1.9.7
 
 `$ git clone https://github.com/abdulku/lamp-ansible.git; cd lamp-ansible`
 
